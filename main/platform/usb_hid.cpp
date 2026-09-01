@@ -62,7 +62,8 @@ constexpr std::uint16_t kUsbVid = 0x303A;
 constexpr std::uint16_t kUsbPid = 0x1006;
 constexpr std::uint16_t kUsbBcdDevice = 0x010A;
 
-#define USB_HID_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+#define USB_HID_DESC_TOTAL_LEN \
+  (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
 
 const std::uint8_t kHidReportDescriptor[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
@@ -153,12 +154,14 @@ const std::uint8_t kHidReportDescriptor[] = {
 
 const std::uint8_t kHidConfigurationDescriptor[] = {
     TUD_CONFIG_DESCRIPTOR(1,
-                          1,
+                          3,
                           0,
                           USB_HID_DESC_TOTAL_LEN,
                           TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP,
                           100),
     TUD_HID_DESCRIPTOR(0, 4, false, sizeof(kHidReportDescriptor), 0x81, 64, 10),
+    // CDC 复合接口（v1.6 灯控通道）：CDC 通信 if=1 + CDC 数据 if=2
+    TUD_CDC_DESCRIPTOR(1, 0x82, 8, 0x03, 0x83, 64, 64),
 };
 
 const tusb_desc_device_t kDeviceDescriptor = {

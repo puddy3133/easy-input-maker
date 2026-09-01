@@ -38,6 +38,7 @@
 #include "keyboard/transport_routing.h"
 #include "platform/battery_adc.h"
 #include "platform/ble_hid.h"
+#include "platform/cdc_light_control.h"
 #include "platform/gpio_keys.h"
 #include "platform/keyboard_audio.h"
 #include "platform/led_strip_status.h"
@@ -165,6 +166,7 @@ struct AppContext {
   ai_keyboard::BatteryEstimator battery_estimator;
   easy_input::BleHidTransport ble;
   easy_input::UsbHidTransport usb;
+  easy_input::CdcLightControl cdc_light;
   ai_keyboard::UsbPhysicalPresenceMonitor usb_physical_presence{
       kUsbDisconnectConfirmMs};
   ai_keyboard::AudioIoArbiter audio_io_arbiter;
@@ -3616,6 +3618,10 @@ extern "C" void app_main(void) {
   publish_config_status_without_payload(&app, "boot", "initializing", false);
   app.deep_sleep_wakeup_configured = configure_deep_sleep_wakeup();
   ESP_ERROR_CHECK(app.leds.begin());
+  const esp_err_t cdc_err = app.cdc_light.begin(&app.leds);
+  if (cdc_err != ESP_OK) {
+    ESP_LOGW(kTag, "CDC light control unavailable: %s", esp_err_to_name(cdc_err));
+  }
   apply_cold_boot_feedback_action(
       &app,
       app.cold_boot_feedback.begin(
@@ -3711,6 +3717,7 @@ extern "C" void app_main(void) {
     }
     apply_pending_config(&app);
     apply_pending_agent_status(&app, millis());
+    app.cdc_light.apply_pending(millis());
     reconcile_keyboard_transport_lifetimes(&app);
     // BLE profile preparation above may take long enough for both edges of a
     // short click to arrive. Poll with a fresh timestamp so queued ISR

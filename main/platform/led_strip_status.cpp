@@ -9,6 +9,8 @@ namespace {
 
 const char* const kTag = "status_led";
 constexpr std::uint32_t kRmtResolutionHz = 20 * 1000 * 1000;
+// v1.6 CDC 灯控：守护进程心跳 10s，30s 无帧整体退出 5 灯模式。
+constexpr std::uint32_t kMultiAgentTimeoutMs = 30000;
 constexpr std::uint16_t kT0hTicks = 6;       // 300 ns at 20 MHz
 constexpr std::uint16_t kT0lTicks = 18;      // 900 ns at 20 MHz
 constexpr std::uint16_t kT1hTicks = 16;      // 800 ns at 20 MHz
@@ -246,11 +248,17 @@ esp_err_t StatusLedStrip::prepare_for_deep_sleep() {
   // blank.
   idle_rendered_ = false;
   agent_status_rendered_ = false;
+  multi_agent_active_ = false;
   return ESP_OK;
 }
 
 void StatusLedStrip::set_agent_status(const ai_keyboard::AgentStatusCommand& command,
                                       std::uint32_t now_ms) {
+  // CDC 5 灯模式（守护进程持续驱动）优先：官方 App 的单 Agent 命令
+  // 在 multi 会话存续期间忽略，避免与 5 灯控制互相覆盖。
+  if (multi_agent_valid(now_ms)) {
+    return;
+  }
   agent_status_ = command;
   if (command.state == ai_keyboard::AgentStatusState::kIdle || command.ttl_ms == 0) {
     agent_status_active_ = false;
@@ -266,6 +274,36 @@ void StatusLedStrip::set_agent_status(const ai_keyboard::AgentStatusCommand& com
     render_background_status(now_ms);
     idle_rendered_ = true;
   }
+}
+
+void StatusLedStrip::set_multi_agent_status(
+    const std::array<ai_keyboard::AgentStatusState, ai_keyboard::kWs2812Count>& states,
+    std::uint32_t now_ms) {
+  multi_agent_states_ = states;
+  multi_agent_active_ = true;
+  multi_agent_last_rx_ms_ = now_ms;
+  agent_status_active_ = false;
+  agent_status_rendered_ = false;
+  idle_rendered_ = false;
+  if (!active_feedback_.active && !cold_boot_sequence_.active()) {
+    render_background_status(now_ms);
+    idle_rendered_ = true;
+  }
+}
+
+void StatusLedStrip::refresh_multi_agent_ttl(std::uint32_t now_ms) {
+  if (!multi_agent_active_) {
+    return;
+  }
+  multi_agent_last_rx_ms_ = now_ms;
+  if (!idle_rendered_) {
+    render_background_status(now_ms);
+    idle_rendered_ = true;
+  }
+}
+
+bool StatusLedStrip::multi_agent_active() const {
+  return multi_agent_active_;
 }
 
 void StatusLedStrip::show_scroll_event(std::int8_t vertical,
@@ -485,6 +523,11 @@ void StatusLedStrip::update(std::uint32_t now_ms) {
     agent_status_rendered_ = false;
     idle_rendered_ = false;
   }
+  if (multi_agent_active_ && !multi_agent_valid(now_ms)) {
+    // 守护进程失联：整体退出 5 灯模式并回落到 single/idle 渲染。
+    multi_agent_active_ = false;
+    idle_rendered_ = false;
+  }
 
   ai_keyboard::BootLedFrame boot_frame;
   if (cold_boot_sequence_.take_due_frame(now_ms, &boot_frame)) {
@@ -536,6 +579,7 @@ bool StatusLedStrip::next_update_deadline_ms(
     }
   }
   add(agent_status_active_, agent_status_expires_ms_);
+  add(multi_agent_active_, multi_agent_last_rx_ms_ + kMultiAgentTimeoutMs);
   if (!idle_rendered_ && !active_feedback_.active &&
       !cold_boot_sequence_.active()) {
     add(true, now_ms);
@@ -550,7 +594,17 @@ bool StatusLedStrip::agent_status_valid(std::uint32_t now_ms) const {
   return agent_status_active_ && deadline_pending(now_ms, agent_status_expires_ms_);
 }
 
+bool StatusLedStrip::multi_agent_valid(std::uint32_t now_ms) const {
+  return multi_agent_active_ &&
+         deadline_pending(now_ms, multi_agent_last_rx_ms_ + kMultiAgentTimeoutMs);
+}
+
 void StatusLedStrip::render_background_status(std::uint32_t now_ms) {
+  if (multi_agent_valid(now_ms)) {
+    render_multi_agent_status();
+    flush();
+    return;
+  }
   if (agent_status_valid(now_ms)) {
     render_agent_status();
     flush();
@@ -578,6 +632,19 @@ void StatusLedStrip::render_agent_status() {
       leds_[index] = scale_rgb(color, 1, 2);
     } else {
       leds_[index] = scale_rgb(color, 1, 4);
+    }
+  }
+}
+
+void StatusLedStrip::render_multi_agent_status() {
+  set_all({});
+  if (leds_.empty()) {
+    return;
+  }
+  // 每颗灯独立映射到对应智能体状态的颜色（idle/off -> 灭灯）。
+  for (std::size_t index = 0; index < leds_.size(); ++index) {
+    if (index < multi_agent_states_.size()) {
+      leds_[index] = agent_status_color(multi_agent_states_[index]);
     }
   }
 }

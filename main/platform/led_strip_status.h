@@ -45,6 +45,14 @@ class StatusLedStrip {
   void show_pixel(std::size_t index, Rgb color);
   void set_agent_status(const ai_keyboard::AgentStatusCommand& command,
                         std::uint32_t now_ms);
+  // v1.6 灯控：CDC 5 灯独立模式。states[i] 对应第 i 颗灯（0..4）的状态。
+  // 任一灯状态为 kIdle 时该灯熄灭。30 秒无任何帧（含心跳）整体退出 multi
+  // 模式并回落到 single/idle 渲染。
+  void set_multi_agent_status(
+      const std::array<ai_keyboard::AgentStatusState, ai_keyboard::kWs2812Count>& states,
+      std::uint32_t now_ms);
+  void refresh_multi_agent_ttl(std::uint32_t now_ms);
+  bool multi_agent_active() const;
   void show_scroll_event(std::int8_t vertical,
                          std::int8_t horizontal,
                          std::uint32_t now_ms);
@@ -68,8 +76,10 @@ class StatusLedStrip {
                              std::uint32_t now_ms);
   void release_cold_boot_visual_ownership(std::uint32_t now_ms);
   bool agent_status_valid(std::uint32_t now_ms) const;
+  bool multi_agent_valid(std::uint32_t now_ms) const;
   void render_background_status(std::uint32_t now_ms);
   void render_agent_status();
+  void render_multi_agent_status();
   void render_idle_status();
   void set_all(Rgb color);
   void render_active_effect();
@@ -93,6 +103,10 @@ class StatusLedStrip {
   std::uint32_t agent_status_expires_ms_ = 0;
   bool agent_status_active_ = false;
   bool agent_status_rendered_ = false;
+  // v1.6 CDC 5 灯独立状态
+  std::array<ai_keyboard::AgentStatusState, ai_keyboard::kWs2812Count> multi_agent_states_ = {};
+  std::uint32_t multi_agent_last_rx_ms_ = 0;
+  bool multi_agent_active_ = false;
   bool idle_rendered_ = false;
 };
 

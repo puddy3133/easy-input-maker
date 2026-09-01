@@ -2,6 +2,7 @@ set(easy_input_main_sources
   "app_main.cpp"
   "platform/battery_adc.cpp"
   "platform/ble_hid.cpp"
+  "platform/cdc_light_control.cpp"
   "platform/gpio_keys.cpp"
   "platform/keyboard_audio.cpp"
   "platform/led_strip_status.cpp"
