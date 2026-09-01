@@ -3621,10 +3621,10 @@ extern "C" void app_main(void) {
   const esp_err_t cdc_err = app.cdc_light.begin(&app.leds);
   if (cdc_err != ESP_OK) {
     ESP_LOGW(kTag, "CDC light control unavailable: %s", esp_err_to_name(cdc_err));
-    g_light_frame_sink = nullptr;
+    easy_input::g_light_frame_sink = nullptr;
   } else {
     // v1.9 BLE 多灯通道：挂载全局帧入口，BLE 写回调经 submit_frame 提交。
-    g_light_frame_sink = &app.cdc_light;
+    easy_input::g_light_frame_sink = &app.cdc_light;
   }
   apply_cold_boot_feedback_action(
       &app,
