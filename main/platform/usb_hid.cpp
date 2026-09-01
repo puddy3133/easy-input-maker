@@ -161,7 +161,8 @@ const std::uint8_t kHidConfigurationDescriptor[] = {
                           100),
     TUD_HID_DESCRIPTOR(0, 4, false, sizeof(kHidReportDescriptor), 0x81, 64, 10),
     // CDC 复合接口（v1.6 灯控通道）：CDC 通信 if=1 + CDC 数据 if=2
-    TUD_CDC_DESCRIPTOR(1, 0x82, 8, 0x03, 0x83, 64, 64),
+    // 签名：(_itfnum, _stridx, _ep_notif, _ep_notif_size, _epout, _epin, _epsize)
+    TUD_CDC_DESCRIPTOR(1, 0, 0x82, 8, 0x03, 0x83, 64),
 };
 
 const tusb_desc_device_t kDeviceDescriptor = {
