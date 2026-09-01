@@ -17,6 +17,8 @@ std::uint32_t millis() {
 
 }  // namespace
 
+CdcLightControl* g_light_frame_sink = nullptr;
+
 bool CdcLightControl::parse_frame(const std::uint8_t* data,
                                   std::size_t len,
                                   Frame* out) {
@@ -64,6 +66,27 @@ esp_err_t CdcLightControl::begin(StatusLedStrip* leds) {
   }
   ESP_LOGI(kTag, "CDC light task started (8-byte frame, magic 0x16)");
   return ESP_OK;
+}
+
+bool CdcLightControl::submit_frame(const std::uint8_t* data,
+                                   std::size_t len) {
+  if (mutex_ == nullptr) {
+    return false;
+  }
+  Frame frame;
+  if (!parse_frame(data, len, &frame)) {
+    return false;
+  }
+  if (xSemaphoreTake(mutex_, portMAX_DELAY) == pdTRUE) {
+    for (std::size_t index = 0; index < pending_states_.size(); ++index) {
+      pending_states_[index] = frame.states[index];
+    }
+    pending_heartbeat_ = frame.heartbeat;
+    pending_valid_ = true;
+    xSemaphoreGive(mutex_);
+    return true;
+  }
+  return false;
 }
 
 void CdcLightControl::apply_pending(std::uint32_t now_ms) {

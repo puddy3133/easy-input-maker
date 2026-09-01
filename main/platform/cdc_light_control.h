@@ -20,12 +20,19 @@ namespace easy_input {
 //   byte2..6 = state_L1..L5（0=idle/灭, 1=running, 2=waiting, 3=done, 4=failed, 5=off）
 //   byte7 = flags（bit0=1 表示纯心跳，仅刷新 TTL 不改状态）
 // 固件 30s 无帧整体退出 5 灯模式（StatusLedStrip 内部处理）。
+//
+// v1.9 BLE 多灯通道：类名保留 CdcLightControl（避免大改），但帧提交统一走
+// submit_frame()，CDC 任务与 BLE 写回调共用同一 pending + 主循环消费机制。
+// app_main 在 begin() 成功后把实例挂到全局 g_light_frame_sink，BLE 层经此提交。
 class CdcLightControl {
  public:
   esp_err_t begin(StatusLedStrip* leds);
-  // 主循环（platform_task）调用：取走 CDC 任务解析出的 pending 帧并应用到
-  // LED 控制器，保证所有 LED 状态变更都发生在主循环上下文（线程安全）。
+  // 主循环（platform_task）调用：取走 pending 帧并应用到 LED 控制器，
+  // 保证所有 LED 状态变更都发生在主循环上下文（线程安全）。
   void apply_pending(std::uint32_t now_ms);
+  // 任意通道（CDC 任务 / BLE 回调）提交一帧 8 字节 0x16 帧。
+  // 内部加锁写入 pending；主循环下一轮 apply_pending 消费。返回是否解析并接受。
+  bool submit_frame(const std::uint8_t* data, std::size_t len);
   bool running() const { return task_ != nullptr; }
 
  private:
@@ -53,5 +60,9 @@ class CdcLightControl {
   bool pending_heartbeat_ = false;
   bool pending_valid_ = false;
 };
+
+// 全局帧提交入口：供 BLE 层（NimBLE 回调上下文）提交多灯状态帧。
+// begin() 成功后由 app_main 赋值为实际实例；为空时 BLE 侧安全忽略。
+extern CdcLightControl* g_light_frame_sink;
 
 }  // namespace easy_input

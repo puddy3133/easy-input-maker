@@ -20,6 +20,7 @@
 #include "keyboard/config_status.h"
 #include "keyboard/hid_keycode.h"
 #include "keyboard/host_action_protocol.h"
+#include "platform/cdc_light_control.h"
 #include "platform/nvs_store.h"
 #include "sdkconfig.h"
 
@@ -303,10 +304,15 @@ const ble_uuid128_t kConfigStatusUuid =
 const ble_uuid128_t kAgentStatusWriteUuid =
     BLE_UUID128_INIT(0x04, 0x00, 0x32, 0x53, 0x46, 0x6D, 0x01, 0x8B,
                      0x2D, 0x4A, 0x6B, 0x6F, 0x10, 0x4D, 0x2F, 0x7D);
+// v1.9 多灯状态写特征（8 字节 0x16 帧，与 CDC 通道同协议）。
+const ble_uuid128_t kMultiAgentStatusWriteUuid =
+    BLE_UUID128_INIT(0x05, 0x00, 0x32, 0x53, 0x46, 0x6D, 0x01, 0x8B,
+                     0x2D, 0x4A, 0x6B, 0x6F, 0x10, 0x4D, 0x2F, 0x7D);
 
 BleHidTransport* s_transport = nullptr;
 std::uint16_t s_config_status_handle = 0;
 std::uint16_t s_agent_status_write_handle = 0;
+std::uint16_t s_multi_agent_status_write_handle = 0;
 
 bool is_bonded_peer(
     const ble_addr_t& peer,
@@ -590,6 +596,16 @@ const ble_gatt_chr_def kConfigCharacteristics[] = {
         BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
         0,
         &s_agent_status_write_handle,
+        nullptr,
+    },
+    {
+        reinterpret_cast<const ble_uuid_t*>(&kMultiAgentStatusWriteUuid),
+        config_access_callback,
+        nullptr,
+        nullptr,
+        BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+        0,
+        &s_multi_agent_status_write_handle,
         nullptr,
     },
     {},
@@ -3085,6 +3101,14 @@ int BleHidTransport::handle_config_access(std::uint16_t conn_handle,
       }
       if (attr_handle == s_agent_status_write_handle) {
         if (!receive_agent_status_report(data.data(), data.size())) {
+          return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+      } else if (attr_handle == s_multi_agent_status_write_handle) {
+        // v1.9 多灯状态帧（8 字节 0x16）经 CdcLightControl::submit_frame 进入
+        // 与 CDC 相同的 pending + 主循环消费路径。g_light_frame_sink 在
+        // app_main 里 begin() 成功后绑定；未就绪时安全忽略。
+        CdcLightControl* sink = g_light_frame_sink;
+        if (sink == nullptr || !sink->submit_frame(data.data(), data.size())) {
           return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }
       } else {
