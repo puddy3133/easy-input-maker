@@ -38,7 +38,10 @@ constexpr std::uint32_t kErrOnMs = 300;               // 错误快闪亮 0.3s
 constexpr std::uint32_t kErrOffMs = 300;              // 错误快闪灭 0.3s
 constexpr std::uint32_t kErrFlashMs = 30U * 1000U;    // 错误周期：闪 30s
 constexpr std::uint32_t kErrQuietMs = 4U * 60U * 1000U + 30U * 1000U;  // 错误周期：灭 4.5min
-constexpr std::uint32_t kDoneHoldMs = 30U * 1000U;    // 完成静态绿 30s 自灭
+constexpr std::uint32_t kDoneFlashMs = 30U * 1000U;   // 完成：绿闪 30s（快完成信号）
+constexpr std::uint32_t kDoneSolidMs = 30U * 1000U;   // 完成：绿常亮 30s（已完成的确认）
+constexpr std::uint32_t kDoneOnMs = 1000;             // 完成绿闪：亮 1s
+constexpr std::uint32_t kDoneOffMs = 1000;            // 完成绿闪：灭 1s
 constexpr std::array<Rgb, ai_keyboard::BootLedSequence::kPixelCount>
     kColdBootProbeColors{{
         {34, 0, 0},
@@ -769,10 +772,19 @@ void StatusLedStrip::render_multi_agent_status_animated(std::uint32_t now_ms) {
         }
         break;
       }
-      case ai_keyboard::AgentStatusState::kCompletedUnread:
-        // 静态绿 30s 后自动熄灭
-        color = elapsed <= kDoneHoldMs ? agent_status_color(state) : Rgb{};
+      case ai_keyboard::AgentStatusState::kCompletedUnread: {
+        // v1.11 完成：绿闪 30s（快完成）→ 绿常亮 30s（完成确认）→ 自动熄灭
+        // 让用户看到绿灯闪 = 快完成，绿常亮 = 已完成，然后灭
+        if (elapsed <= kDoneFlashMs) {
+          const std::uint32_t t = elapsed % (kDoneOnMs + kDoneOffMs);
+          color = t < kDoneOnMs ? agent_status_color(state) : Rgb{};
+        } else if (elapsed <= kDoneFlashMs + kDoneSolidMs) {
+          color = agent_status_color(state);
+        } else {
+          color = Rgb{};
+        }
         break;
+      }
       case ai_keyboard::AgentStatusState::kFailed: {
         // 快闪，占空比周期：闪 30s → 静默 4.5min → 循环
         if (!duty_cycle_active(elapsed, 0, kErrFlashMs, kErrQuietMs)) {
