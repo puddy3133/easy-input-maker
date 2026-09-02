@@ -68,7 +68,7 @@ bool deadline_pending(std::uint32_t now_ms, std::uint32_t deadline_ms) {
 Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
   switch (state) {
     case ai_keyboard::AgentStatusState::kRunning:
-      return {0, 0, 28};   // 纯蓝
+      return {0, 0, 36};   // 纯蓝（提高亮度，让呼吸明显可辨）
     case ai_keyboard::AgentStatusState::kWaitingUser:
       return {30, 30, 0};  // 纯黄（正色化）
     case ai_keyboard::AgentStatusState::kCompletedUnread:
@@ -81,11 +81,11 @@ Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
   return {};
 }
 
-// 慢呼吸调制：2s 周期正弦，亮度在 ~0.3~0.8 间平滑变化（省寿命 + 柔和）。
+// 慢呼吸调制：2s 周期正弦，亮度在 ~0.1~1.0 间平滑变化（幅度大、明显可辨）。
 Rgb breathe_rgb(Rgb base, std::uint32_t phase_ms) {
   const double t = static_cast<double>(phase_ms % kBreathPeriodMs) /
                    static_cast<double>(kBreathPeriodMs);
-  const double k = 0.55 + 0.25 * std::sin(2.0 * 3.14159265358979 * t);
+  const double k = 0.55 + 0.45 * std::sin(2.0 * 3.14159265358979 * t);
   return {
       static_cast<std::uint8_t>(static_cast<double>(base.red) * k),
       static_cast<std::uint8_t>(static_cast<double>(base.green) * k),
