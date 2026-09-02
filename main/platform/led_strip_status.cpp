@@ -82,7 +82,7 @@ Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
   return {};
 }
 
-// 慢呼吸调制：2s 周期正弦。full=全亮(0.1~1.0)；dim=低亮(0.1~0.4，工作超 5 分钟后用)。
+// 慢呼吸调制：kBreathPeriodMs 周期正弦。full=全亮(0.0~1.0)；dim=低亮(0.1~0.4，工作超 5 分钟后用)。
 Rgb breathe_rgb_amp(Rgb base, std::uint32_t phase_ms, double center, double amp) {
   const double t = static_cast<double>(phase_ms % kBreathPeriodMs) /
                    static_cast<double>(kBreathPeriodMs);
