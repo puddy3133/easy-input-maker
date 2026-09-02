@@ -71,7 +71,7 @@ Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
     case ai_keyboard::AgentStatusState::kRunning:
       return {0, 0, 36};   // 纯蓝（提高亮度，让呼吸明显可辨）
     case ai_keyboard::AgentStatusState::kWaitingUser:
-      return {30, 30, 0};  // 纯黄（正色化）
+      return {30, 20, 0};  // 橙色（R:G≈3:2，待确认醒目且区别于纯黄）
     case ai_keyboard::AgentStatusState::kCompletedUnread:
       return {0, 28, 0};   // 纯绿（正色化）
     case ai_keyboard::AgentStatusState::kFailed:
