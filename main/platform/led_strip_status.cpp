@@ -94,7 +94,7 @@ Rgb breathe_rgb_amp(Rgb base, std::uint32_t phase_ms, double center, double amp)
   };
 }
 Rgb breathe_rgb(Rgb base, std::uint32_t phase_ms) {
-  return breathe_rgb_amp(base, phase_ms, 0.55, 0.45); // 全亮 0.1~1.0
+  return breathe_rgb_amp(base, phase_ms, 0.5, 0.5); // 全亮 0.0~1.0（最暗全灭，呼吸更明显）
 }
 Rgb dim_breathe_rgb(Rgb base, std::uint32_t phase_ms) {
   return breathe_rgb_amp(base, phase_ms, 0.25, 0.15); // 低亮 0.1~0.4
