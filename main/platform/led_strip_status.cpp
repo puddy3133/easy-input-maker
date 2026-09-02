@@ -29,6 +29,7 @@ constexpr int kWorkFlashCount = 5;                    // 开始工作提醒：�
 constexpr std::uint32_t kWorkFlashOnMs = 150;         // 快闪亮
 constexpr std::uint32_t kWorkFlashOffMs = 150;        // 快闪灭
 constexpr std::uint32_t kBreathPeriodMs = 2000;       // 工作慢呼吸周期（正弦）
+constexpr std::uint32_t kWorkDimAfterMs = 5 * 60 * 1000; // 工作持续 5 分钟后降为低亮呼吸（省寿命/省电）
 constexpr std::uint32_t kWaitOnMs = 1000;             // 待确认慢闪亮 1s
 constexpr std::uint32_t kWaitOffMs = 1000;            // 待确认慢闪灭 1s
 constexpr std::uint32_t kWaitFlashMs = 60U * 1000U;   // 待确认周期：闪 1min
@@ -81,16 +82,22 @@ Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
   return {};
 }
 
-// 慢呼吸调制：2s 周期正弦，亮度在 ~0.1~1.0 间平滑变化（幅度大、明显可辨）。
-Rgb breathe_rgb(Rgb base, std::uint32_t phase_ms) {
+// 慢呼吸调制：2s 周期正弦。full=全亮(0.1~1.0)；dim=低亮(0.1~0.4，工作超 5 分钟后用)。
+Rgb breathe_rgb_amp(Rgb base, std::uint32_t phase_ms, double center, double amp) {
   const double t = static_cast<double>(phase_ms % kBreathPeriodMs) /
                    static_cast<double>(kBreathPeriodMs);
-  const double k = 0.55 + 0.45 * std::sin(2.0 * 3.14159265358979 * t);
+  const double k = center + amp * std::sin(2.0 * 3.14159265358979 * t);
   return {
       static_cast<std::uint8_t>(static_cast<double>(base.red) * k),
       static_cast<std::uint8_t>(static_cast<double>(base.green) * k),
       static_cast<std::uint8_t>(static_cast<double>(base.blue) * k),
   };
+}
+Rgb breathe_rgb(Rgb base, std::uint32_t phase_ms) {
+  return breathe_rgb_amp(base, phase_ms, 0.55, 0.45); // 全亮 0.1~1.0
+}
+Rgb dim_breathe_rgb(Rgb base, std::uint32_t phase_ms) {
+  return breathe_rgb_amp(base, phase_ms, 0.25, 0.15); // 低亮 0.1~0.4
 }
 
 // 点亮时间占比（占空比）控制：周期内 active 时间段点亮，否则灭。
@@ -744,6 +751,9 @@ void StatusLedStrip::render_multi_agent_status_animated(std::uint32_t now_ms) {
         if (elapsed < flash_total) {
           const std::uint32_t t = elapsed % (kWorkFlashOnMs + kWorkFlashOffMs);
           color = t < kWorkFlashOnMs ? blue : Rgb{};
+        } else if (elapsed >= kWorkDimAfterMs) {
+          // 工作持续 5 分钟后降为低亮呼吸（省寿命/省电，仍可感知"在忙"）
+          color = dim_breathe_rgb(blue, now_ms);
         } else {
           color = breathe_rgb(blue, now_ms);
         }
