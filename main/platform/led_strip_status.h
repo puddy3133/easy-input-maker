@@ -80,6 +80,7 @@ class StatusLedStrip {
   void render_background_status(std::uint32_t now_ms);
   void render_agent_status();
   void render_multi_agent_status();
+  void render_multi_agent_status_animated(std::uint32_t now_ms);
   void render_idle_status();
   void set_all(Rgb color);
   void render_active_effect();
@@ -108,6 +109,10 @@ class StatusLedStrip {
   std::uint32_t multi_agent_last_rx_ms_ = 0;
   bool multi_agent_active_ = false;
   bool idle_rendered_ = false;
+  // v1.10 动画：每灯状态跃迁检测 + 状态起始时刻 + 动画帧调度
+  std::array<ai_keyboard::AgentStatusState, ai_keyboard::kWs2812Count> multi_agent_prev_states_ = {};
+  std::array<std::uint32_t, ai_keyboard::kWs2812Count> multi_agent_since_ms_ = {};
+  std::uint32_t multi_agent_anim_frame_ms_ = 0;
 };
 
 }  // namespace easy_input

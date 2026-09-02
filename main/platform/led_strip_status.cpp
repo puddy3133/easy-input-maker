@@ -1,5 +1,7 @@
 #include "platform/led_strip_status.h"
 
+#include <cmath>
+
 #include "driver/rmt_tx.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -21,6 +23,21 @@ constexpr std::size_t kWs2812SymbolCount = (ai_keyboard::kWs2812Count * 24U) + 1
 // literal 1 ms timeout becomes zero ticks; allow two ticks for completion
 // while still bounding a faulty transfer.
 constexpr int kRmtFlushWaitMs = 2 * portTICK_PERIOD_MS;
+// v1.10 动画参数（可在此统一调整；守护进程侧 config 亦提供镜像说明）
+constexpr std::uint32_t kMultiAgentAnimFrameMs = 50;  // 动画渲染帧间隔（20fps）
+constexpr int kWorkFlashCount = 5;                    // 开始工作提醒：蓝快闪 5 次
+constexpr std::uint32_t kWorkFlashOnMs = 150;         // 快闪亮
+constexpr std::uint32_t kWorkFlashOffMs = 150;        // 快闪灭
+constexpr std::uint32_t kBreathPeriodMs = 2000;       // 工作慢呼吸周期（正弦）
+constexpr std::uint32_t kWaitOnMs = 1000;             // 待确认慢闪亮 1s
+constexpr std::uint32_t kWaitOffMs = 1000;            // 待确认慢闪灭 1s
+constexpr std::uint32_t kWaitFlashMs = 60U * 1000U;   // 待确认周期：闪 1min
+constexpr std::uint32_t kWaitQuietMs = 4U * 60U * 1000U;  // 待确认周期：灭 4min
+constexpr std::uint32_t kErrOnMs = 300;               // 错误快闪亮 0.3s
+constexpr std::uint32_t kErrOffMs = 300;              // 错误快闪灭 0.3s
+constexpr std::uint32_t kErrFlashMs = 30U * 1000U;    // 错误周期：闪 30s
+constexpr std::uint32_t kErrQuietMs = 4U * 60U * 1000U + 30U * 1000U;  // 错误周期：灭 4.5min
+constexpr std::uint32_t kDoneHoldMs = 30U * 1000U;    // 完成静态绿 30s 自灭
 constexpr std::array<Rgb, ai_keyboard::BootLedSequence::kPixelCount>
     kColdBootProbeColors{{
         {34, 0, 0},
@@ -51,17 +68,41 @@ bool deadline_pending(std::uint32_t now_ms, std::uint32_t deadline_ms) {
 Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
   switch (state) {
     case ai_keyboard::AgentStatusState::kRunning:
-      return {0, 0, 28};
+      return {0, 0, 28};   // 纯蓝
     case ai_keyboard::AgentStatusState::kWaitingUser:
-      return {30, 12, 0};
+      return {30, 30, 0};  // 纯黄（正色化）
     case ai_keyboard::AgentStatusState::kCompletedUnread:
-      return {0, 24, 5};
+      return {0, 28, 0};   // 纯绿（正色化）
     case ai_keyboard::AgentStatusState::kFailed:
-      return {30, 0, 8};
+      return {30, 0, 0};   // 纯红（正色化，去粉）
     case ai_keyboard::AgentStatusState::kIdle:
       return {};
   }
   return {};
+}
+
+// 慢呼吸调制：2s 周期正弦，亮度在 ~0.3~0.8 间平滑变化（省寿命 + 柔和）。
+Rgb breathe_rgb(Rgb base, std::uint32_t phase_ms) {
+  const double t = static_cast<double>(phase_ms % kBreathPeriodMs) /
+                   static_cast<double>(kBreathPeriodMs);
+  const double k = 0.55 + 0.25 * std::sin(2.0 * 3.14159265358979 * t);
+  return {
+      static_cast<std::uint8_t>(static_cast<double>(base.red) * k),
+      static_cast<std::uint8_t>(static_cast<double>(base.green) * k),
+      static_cast<std::uint8_t>(static_cast<double>(base.blue) * k),
+  };
+}
+
+// 点亮时间占比（占空比）控制：周期内 active 时间段点亮，否则灭。
+inline bool duty_cycle_active(std::uint32_t now_ms,
+                              std::uint32_t since_ms,
+                              std::uint32_t active_ms,
+                              std::uint32_t quiet_ms) {
+  const std::uint32_t period = active_ms + quiet_ms;
+  if (period == 0) {
+    return true;
+  }
+  return (now_ms - since_ms) % period < active_ms;
 }
 
 void set_scaled_pixel(std::array<Rgb, ai_keyboard::kWs2812Count>* leds,
@@ -279,15 +320,25 @@ void StatusLedStrip::set_agent_status(const ai_keyboard::AgentStatusCommand& com
 void StatusLedStrip::set_multi_agent_status(
     const std::array<ai_keyboard::AgentStatusState, ai_keyboard::kWs2812Count>& states,
     std::uint32_t now_ms) {
-  multi_agent_states_ = states;
+  // v1.10：状态跃迁检测（守护进程每 2s 重发相同帧，仅状态值变化时重置动画计时）
+  for (std::size_t index = 0; index < multi_agent_states_.size(); ++index) {
+    const auto next = states[index];
+    if (next != multi_agent_states_[index]) {
+      multi_agent_prev_states_[index] = multi_agent_states_[index];
+      multi_agent_since_ms_[index] = now_ms;
+      multi_agent_states_[index] = next;
+    }
+  }
   multi_agent_active_ = true;
   multi_agent_last_rx_ms_ = now_ms;
   agent_status_active_ = false;
   agent_status_rendered_ = false;
   idle_rendered_ = false;
+  // 动画帧立即调度（下一轮 update 即渲染）
+  multi_agent_anim_frame_ms_ = now_ms;
   if (!active_feedback_.active && !cold_boot_sequence_.active()) {
-    render_background_status(now_ms);
-    idle_rendered_ = true;
+    render_multi_agent_status_animated(now_ms);
+    flush();
   }
 }
 
@@ -296,9 +347,11 @@ void StatusLedStrip::refresh_multi_agent_ttl(std::uint32_t now_ms) {
     return;
   }
   multi_agent_last_rx_ms_ = now_ms;
+  // 心跳仅刷新 TTL，不重置动画计时；按帧推进调度。
+  multi_agent_anim_frame_ms_ = now_ms;
   if (!idle_rendered_) {
-    render_background_status(now_ms);
-    idle_rendered_ = true;
+    render_multi_agent_status_animated(now_ms);
+    flush();
   }
 }
 
@@ -543,6 +596,14 @@ void StatusLedStrip::update(std::uint32_t now_ms) {
   if (update_active_feedback(now_ms)) {
     return;
   }
+  // v1.10：multi_agent 动画按帧渲染（快闪/呼吸/慢闪/超时周期）
+  if (multi_agent_active_ && multi_agent_valid(now_ms)) {
+    render_multi_agent_status_animated(now_ms);
+    flush();
+    multi_agent_anim_frame_ms_ = now_ms + kMultiAgentAnimFrameMs;
+    idle_rendered_ = true;
+    return;
+  }
   if (!idle_rendered_) {
     render_background_status(now_ms);
     idle_rendered_ = true;
@@ -579,7 +640,13 @@ bool StatusLedStrip::next_update_deadline_ms(
     }
   }
   add(agent_status_active_, agent_status_expires_ms_);
-  add(multi_agent_active_, multi_agent_last_rx_ms_ + kMultiAgentTimeoutMs);
+  // v1.10：multi_agent 动画帧调度（快闪/呼吸/慢闪需要周期性刷新）
+  if (multi_agent_active_ && multi_agent_valid(now_ms)) {
+    add(true, multi_agent_anim_frame_ms_);
+    add(true, multi_agent_last_rx_ms_ + kMultiAgentTimeoutMs);
+  } else {
+    add(multi_agent_active_, multi_agent_last_rx_ms_ + kMultiAgentTimeoutMs);
+  }
   if (!idle_rendered_ && !active_feedback_.active &&
       !cold_boot_sequence_.active()) {
     add(true, now_ms);
@@ -601,7 +668,7 @@ bool StatusLedStrip::multi_agent_valid(std::uint32_t now_ms) const {
 
 void StatusLedStrip::render_background_status(std::uint32_t now_ms) {
   if (multi_agent_valid(now_ms)) {
-    render_multi_agent_status();
+    render_multi_agent_status_animated(now_ms);
     flush();
     return;
   }
@@ -637,15 +704,80 @@ void StatusLedStrip::render_agent_status() {
 }
 
 void StatusLedStrip::render_multi_agent_status() {
+  // 保持静态版本（兼容内部其他路径），动画逻辑见 *_animated。
   set_all({});
   if (leds_.empty()) {
     return;
   }
-  // 每颗灯独立映射到对应智能体状态的颜色（idle/off -> 灭灯）。
   for (std::size_t index = 0; index < leds_.size(); ++index) {
     if (index < multi_agent_states_.size()) {
       leds_[index] = agent_status_color(multi_agent_states_[index]);
     }
+  }
+}
+
+// v1.10 动画渲染：每颗灯按状态机渲染（快闪提醒/慢呼吸/慢闪/静态绿自灭/快闪），
+// 并结合占空比超时周期（方案 B：闪一段时间后静默，省寿命 + 不漏提醒）。
+void StatusLedStrip::render_multi_agent_status_animated(std::uint32_t now_ms) {
+  set_all({});
+  if (leds_.empty()) {
+    return;
+  }
+  for (std::size_t index = 0; index < leds_.size(); ++index) {
+    if (index >= multi_agent_states_.size()) {
+      continue;
+    }
+    const auto state = multi_agent_states_[index];
+    const std::uint32_t since = multi_agent_since_ms_[index];
+    const std::uint32_t elapsed = now_ms - since;
+    Rgb color = {};
+    switch (state) {
+      case ai_keyboard::AgentStatusState::kIdle:
+        color = {};
+        break;
+      case ai_keyboard::AgentStatusState::kRunning: {
+        const Rgb blue = agent_status_color(state);
+        // 开始工作提醒：蓝快闪 N 次 → 之后进入慢呼吸
+        const std::uint32_t flash_total =
+            static_cast<std::uint32_t>(kWorkFlashCount) *
+            (kWorkFlashOnMs + kWorkFlashOffMs);
+        if (elapsed < flash_total) {
+          const std::uint32_t t = elapsed % (kWorkFlashOnMs + kWorkFlashOffMs);
+          color = t < kWorkFlashOnMs ? blue : Rgb{};
+        } else {
+          color = breathe_rgb(blue, now_ms);
+        }
+        break;
+      }
+      case ai_keyboard::AgentStatusState::kWaitingUser: {
+        // 慢闪（亮1s灭1s），占空比周期：闪 1min → 静默 4min → 循环
+        if (!duty_cycle_active(elapsed, 0, kWaitFlashMs, kWaitQuietMs)) {
+          color = {};
+        } else {
+          const std::uint32_t t = elapsed % (kWaitOnMs + kWaitOffMs);
+          color = t < kWaitOnMs ? agent_status_color(state) : Rgb{};
+        }
+        break;
+      }
+      case ai_keyboard::AgentStatusState::kCompletedUnread:
+        // 静态绿 30s 后自动熄灭
+        color = elapsed <= kDoneHoldMs ? agent_status_color(state) : Rgb{};
+        break;
+      case ai_keyboard::AgentStatusState::kFailed: {
+        // 快闪，占空比周期：闪 30s → 静默 4.5min → 循环
+        if (!duty_cycle_active(elapsed, 0, kErrFlashMs, kErrQuietMs)) {
+          color = {};
+        } else {
+          const std::uint32_t t = elapsed % (kErrOnMs + kErrOffMs);
+          color = t < kErrOnMs ? agent_status_color(state) : Rgb{};
+        }
+        break;
+      }
+      default:
+        color = {};
+        break;
+    }
+    leds_[index] = color;
   }
 }
 
