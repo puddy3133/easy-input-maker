@@ -85,7 +85,7 @@ Rgb agent_status_color(ai_keyboard::AgentStatusState state) {
   return {};
 }
 
-// 慢呼吸调制：kBreathPeriodMs 周期正弦。full=全亮(0.0~1.0)；dim=低亮(0.1~0.4，工作超 5 分钟后用)。
+// 慢呼吸调制：kBreathPeriodMs 周期正弦。full=全亮(0.0~1.0)；dim=低亮(0.05~0.2，工作超 5 分钟后用)。
 Rgb breathe_rgb_amp(Rgb base, std::uint32_t phase_ms, double center, double amp) {
   const double t = static_cast<double>(phase_ms % kBreathPeriodMs) /
                    static_cast<double>(kBreathPeriodMs);
@@ -100,7 +100,7 @@ Rgb breathe_rgb(Rgb base, std::uint32_t phase_ms) {
   return breathe_rgb_amp(base, phase_ms, 0.5, 0.5); // 全亮 0.0~1.0（最暗全灭，呼吸更明显）
 }
 Rgb dim_breathe_rgb(Rgb base, std::uint32_t phase_ms) {
-  return breathe_rgb_amp(base, phase_ms, 0.25, 0.15); // 低亮 0.1~0.4
+  return breathe_rgb_amp(base, phase_ms, 0.125, 0.075); // 低亮 0.05~0.2
 }
 
 // 点亮时间占比（占空比）控制：周期内 active 时间段点亮，否则灭。
